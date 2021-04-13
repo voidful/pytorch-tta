@@ -458,23 +458,12 @@ class TTAModel(BertModel):
 
         self.init_weights()
 
-    def creat_dig_mask(self, attention_mask, device):
-        mlen = attention_mask[-1].shape[0]
-        qslen = torch.count_nonzero(attention_mask, dim=-1).tolist()
-        mask_stack = []
-        for qlen in qslen:
-            mask_up = torch.triu(torch.ones([qlen, qlen]), diagonal=1)
-            mask_lo = torch.tril(torch.ones([qlen, qlen]), diagonal=-1)
-            dig_mask = mask_up + mask_lo
-            if mlen - qlen > 0:
-                attn_mask_pad = torch.zeros([qlen, mlen - qlen])
-                dig_mask = torch.cat([dig_mask, attn_mask_pad], dim=1)
-                mask = torch.cat([dig_mask, torch.zeros([mlen - qlen, mlen])], dim=0)
-            else:
-                mask = dig_mask
-            mask_stack.append(mask)
-        extended_attention_mask = (1.0 - torch.stack(mask_stack)) * -10000.0
-        return extended_attention_mask.unsqueeze(1).to(device)
+    def creat_diagonal_mask(self, attention_mask, device):
+        dig_mask = torch.eye(attention_mask.shape[-1]).to(device)
+        dig_mask = torch.where(dig_mask == 0, 1, 0)
+        dig_mask = dig_mask * attention_mask.unsqueeze(1)
+        dig_mask = torch.transpose(dig_mask, 1, 2) * attention_mask.unsqueeze(1)
+        return torch.where(dig_mask > 0, 0., -10000.0).unsqueeze(1)
 
     def forward(
             self,
@@ -524,7 +513,7 @@ class TTAModel(BertModel):
         if token_type_ids is None:
             token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
 
-        extended_attention_mask = self.creat_dig_mask(attention_mask, device)
+        extended_attention_mask = self.creat_diagonal_mask(attention_mask, device)
         encoder_extended_attention_mask = None
 
         # Prepare head mask if needed
